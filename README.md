@@ -50,12 +50,11 @@ source .venv/bin/activate
 
 ### 2. Revisar a configuração dos serviços
 
-Antes de iniciar a infraestrutura, revise `docker-compose.yml`:
+O Compose usa as variáveis do `.env`, ignorado pelo Git. Para uma nova instalação, copie `.env.example` para `.env` e preencha `AUTHENTICATION_API_KEY` e `POSTGRES_PASSWORD`. Se já tiver um `.env`, preserve seu conteúdo e adicione apenas as variáveis ausentes. Os campos obrigatórios vazios impedem a inicialização. Use senha hexadecimal para evitar caracteres reservados na URI.
 
-- Ajuste a chave `AUTHENTICATION_API_KEY` e as credenciais do PostgreSQL conforme o ambiente.
-- A variável `CACHE_REDIS_URI` aponta para `evo_redis`, mas o serviço Redis se chama `redis`. Altere o valor para `redis://redis:6379/1` para utilizar o nome do serviço na rede do Compose.
+As imagens usam PostgreSQL 17 e Redis 7.4. Se já existir um volume PostgreSQL de outra versão principal, utilize uma imagem compat?vel com ele ou faça uma migração antes de iniciar. Não exclua volumes com dados necess?rios. Alterar a senha no `.env` não altera a senha de um banco já inicializado.
 
-O arquivo `.env` está ignorado pelo Git, mas o código Python atual não o carrega e o Compose contém os valores de configuração diretamente no YAML.
+O código Python atual ainda não carrega o `.env`.
 
 ### 3. Iniciar a infraestrutura
 
@@ -64,15 +63,15 @@ docker compose up -d
 docker compose ps
 ```
 
-Portas configuradas no host:
+Endereços dos serviços (a API fica acessível apenas pela interface local):
 
 | Serviço | Endereço |
 | --- | --- |
 | Evolution API | `http://localhost:8080` |
-| PostgreSQL | `localhost:5432` |
-| Redis | `localhost:6379` |
+| PostgreSQL | `postgres:5432` (rede Docker) |
+| Redis | `redis:6379` (rede Docker) |
 
-Os dados dos serviços ficam armazenados em volumes Docker. O Compose ainda não configura verificações de saúde nem dependências de inicialização; consulte os logs para verificar se os serviços ficaram disponíveis:
+Os dados ficam em volumes Docker. A API aguarda os healthchecks do PostgreSQL e do Redis antes de iniciar. O Redis usa persistência AOF. Para acompanhar a inicialização:
 
 ```bash
 docker compose logs -f
