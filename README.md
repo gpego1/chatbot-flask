@@ -1,4 +1,197 @@
-﻿# Chatbot para WhatsApp
+<a id="english"></a>
+
+# WhatsApp Chatbot
+
+[English](#english) | [Português](#portugues)
+
+A virtual assistant for a clothing store built with Flask, LangChain and Groq. It receives messages through the Evolution API, retrieves store policies using RAG, and can look up products in a catalog before replying on WhatsApp.
+
+## How it works
+
+1. Evolution forwards messages to `POST /webhook`.
+2. The webhook ignores outgoing messages, groups, blocked contacts and messages without text.
+3. Vector search retrieves up to four records from `Q&A.csv` to build the context.
+4. The LLM can call `consultar_catalogo` to look up prices, sizes, colors, materials and stock.
+5. The generated text is sent to the sender and returned in the HTTP response.
+
+Each request is independent: conversation history is not retained between messages. The bot reads stock from the CSV; it does not reserve products or update quantities.
+
+## Technologies and structure
+
+- Python, Flask, Requests and python-dotenv.
+- LangChain and ChatGroq with tool calling.
+- Hugging Face embeddings: `sentence-transformers/all-MiniLM-L6-v2`.
+- Chroma for the persistent vector index.
+- Docker Compose: Evolution API `v2.3.7`, PostgreSQL 17 and Redis 7.4.
+
+| File | Purpose |
+| --- | --- |
+| `chabot.py` | Flask application, RAG, chain and filters |
+| `catalog.py` | Catalog lookup tool |
+| `catalogo.csv` | Products, prices, sizes and stock |
+| `Q&A.csv` | Store questions and answers |
+| `utils/evolutionAPI.py` | Message delivery client |
+| `docker-compose.yml` | Evolution API, PostgreSQL and Redis |
+| `requirements.txt` | Python dependencies |
+| `.env.example` | Partial configuration example |
+| `main.py` | PyCharm sample; does not start the bot |
+| `chroma_db/` | Locally generated index |
+
+## Run locally
+
+### 1. Set up Python
+
+Install Python with `pip` and Docker with Docker Compose. From the project directory, in PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 2. Configure `.env`
+
+For a new installation, copy `.env.example` to `.env`. If the file already exists, preserve its values and add only the missing variables:
+
+```dotenv
+# Groq key: the current code uses this variable name.
+OPENAI_API_KEY=YOUR_GROQ_KEY
+# Groq model with tool calling support.
+MODEL=MODEL_IDENTIFIER
+
+AUTHENTICATION_API_KEY=YOUR_EVOLUTION_KEY
+POSTGRES_DB=evolution
+POSTGRES_USER=evolution
+POSTGRES_PASSWORD=DATABASE_PASSWORD
+
+# Optional: country code and area code included, comma-separated.
+BOT_BLOCKED_CONTACTS=5511999999999,5521988888888
+```
+
+Despite its name, `OPENAI_API_KEY` authenticates `ChatGroq`. An `OpenAI` client is also initialized, but it does not generate responses. `OPENAI_BASE_URL` is optional and affects only that client.
+
+The instance, delivery API key and recipient come from the request. The `EVOLUTION_INSTANCE_NAME`, `EVOLUTION_API_KEY` and `EVOLUTION_RECIPIENT_NUMBER` variables in the older example are not used by the current webhook.
+
+Leave `BOT_BLOCKED_CONTACTS` empty to allow all individual contacts. Full identifiers such as `123456789@lid` are also supported. If Evolution sends only a LID, block that full identifier; phone numbers can also be recognized when provided through `remoteJidAlt`. Restart Flask after changing `.env`.
+
+### 3. Start the infrastructure
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+| Service | Address |
+| --- | --- |
+| Evolution API | `http://localhost:8080` |
+| PostgreSQL on the host | `localhost:5441` |
+| PostgreSQL on the Docker network | `postgres:5432` |
+| Redis on the Docker network | `redis:6379` |
+
+Services use persistent volumes. Evolution waits for PostgreSQL and Redis health checks. Changing the password in `.env` does not change the password of an already initialized database.
+
+### 4. Start the bot
+
+```powershell
+.\.venv\Scripts\python.exe chabot.py
+```
+
+Flask listens on `0.0.0.0:5000`. The first startup may take time to download the embedding model and build the index. Keep the process running.
+
+### 5. Configure the webhook
+
+Connect the instance to WhatsApp and configure its webhook in the Evolution dashboard:
+
+| Field | Value for Docker Desktop on Windows with Flask on the host |
+| --- | --- |
+| Enabled | On |
+| URL | `http://host.docker.internal:5000/webhook` |
+| Webhook by Events | Off |
+| Webhook Base64 | Off |
+| Event | `MESSAGES_UPSERT` |
+
+The URL must be reachable from the container. In this setup, `localhost` inside the container refers to the container itself. Adapt the address if services run on other machines or containers.
+
+Send a message from another phone number to the connected WhatsApp account. Outgoing and group messages are ignored with HTTP 200.
+
+## Test a request
+
+In Postman or Insomnia, send `POST http://127.0.0.1:5000/webhook` with `Content-Type: application/json` and this JSON body:
+
+```json
+{
+  "event": "messages.upsert",
+  "instance": "ACTUAL_INSTANCE_NAME",
+  "apikey": "ACTUAL_EVOLUTION_KEY",
+  "data": {
+    "key": {
+      "remoteJid": "5511999999999@s.whatsapp.net",
+      "fromMe": false
+    },
+    "message": {
+      "conversation": "Qual o preço e os tamanhos disponíveis do produto RP001?"
+    }
+  }
+}
+```
+
+Replace the placeholders with real values. This test generates a response and sends a real message to the specified number. The example asks about product RP001; the assistant is configured to reply in Brazilian Portuguese.
+
+The webhook also accepts `instance` inside `data`, `apiKey` instead of `apikey`, `remoteId` instead of `remoteJid`, and text in `data.message.extendedTextMessage.text`.
+
+| Response | Meaning |
+| --- | --- |
+| `200` with a JSON string | Response generated and send request accepted by Evolution; does not confirm delivery or reading |
+| `200` with `status: ignored` | Event ignored without generating or sending a response |
+| `400` | Invalid JSON or required fields |
+| `500` | Unhandled exception during generation, lookup or sending; check the Flask terminal |
+
+## Update the data sources
+
+### Store policies: `Q&A.csv`
+
+A UTF-8, comma-separated CSV with two columns and **no header**: question and answer. Values containing commas or line breaks must be quoted.
+
+```csv
+Do you offer installments?,"Enter the store's actual payment terms here."
+```
+
+Each record becomes a Chroma document. Restart Flask after editing the file: its contents determine the collection used. Stable IDs prevent duplicates when restarting with the same version. Previous collections remain in storage.
+
+### Products: `catalogo.csv`
+
+A UTF-8, semicolon-separated CSV with this header. Keep the field names unchanged:
+
+```text
+id_produto;produto;categoria;publico;cor;material;preco_brl;tamanhos_disponiveis;estoque_por_tamanho;estoque_total;descricao
+```
+
+The tool reads the file on every lookup, so updates do not require reindexing or restarting. It searches codes or terms from product names, categories and attributes, ignoring case and accents. It returns up to ten products and the total match count. A supplied `RP...` code must match exactly.
+
+The LLM can refine searches for up to three rounds of tool calls, then generates a response without additional tools. Catalog lookup depends on the LLM's decision and the model's tool calling support.
+
+## Troubleshooting and shutdown
+
+Follow Evolution logs with:
+
+```powershell
+docker compose logs -f evolution-api
+```
+
+For webhook errors, read the traceback in the `chabot.py` terminal. If sending returns 404, check the instance and URL. For authentication failures, check the submitted API key. If Flask receives no requests, check the instance connection, configured event and webhook URL connectivity.
+
+Stop Flask with `Ctrl+C`. To stop the infrastructure while preserving volumes:
+
+```powershell
+docker compose down
+```
+
+---
+
+<a id="portugues"></a>
+
+[English](#english) | [Português](#portugues)
+
+# Chatbot para WhatsApp
 
 Atendente virtual de uma loja de roupas com Flask, LangChain e Groq. Recebe mensagens pela Evolution API, consulta as políticas da loja por RAG e pode buscar produtos no catálogo antes de responder pelo WhatsApp.
 
