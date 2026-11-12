@@ -62,6 +62,8 @@ def format_context(documents):
     return "\n\n".join(document.page_content for document in documents)
 
 
+#Model instance, prompt and RAG
+
 llm = ChatGroq(
     model=os.getenv("MODEL"),
     api_key=os.getenv("OPENAI_API_KEY"),
@@ -85,6 +87,10 @@ Seu objetivo é responder às dúvidas dos clientes de maneira clara, educada, o
 9. Sinta-se confortável em compartilhar quando não souber de algum resultado, evite suposições
 10. Para produtos específicos, preços, materiais, cores, tamanhos ou estoque, consulte a ferramenta consultar_catalogo antes de responder. Use nomes, categorias ou códigos na busca; refine a consulta se necessário.
 11. O contexto contém políticas da loja; a ferramenta contém os dados dos produtos. Não afirme que um produto está indisponível sem consultá-la. Não invente preços ou disponibilidade. Se a consulta retornar uma lista limitada, não a apresente como o catálogo completo.
+
+REGRAS:
+1. NAO MANDE MENSAGENS REPETIDAS
+2. NAO INICIE TODAS AS FRASES COM NENHUM TIPO DE SAUDAÇÃO, APENAS AS PRIMEIRAS MENSAGENS
 
 ### Contexto da loja:
 {context}
